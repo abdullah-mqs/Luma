@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=luma-v3
+Exec=luma-v3
+Icon=luma-v3
+Categories=Development;
+Terminal=false
+Keywords=wails
+Version=1.0
+StartupNotify=false

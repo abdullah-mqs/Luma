@@ -2,7 +2,7 @@ import { For, Show, createMemo, createSignal } from 'solid-js'
 import { FiShield, FiFolderOpen, FiPlus } from '../Icons'
 import CollectionItem from './CollectionItem'
 import { vault, collections, sidebarOpen, setVault, setCollections } from '../../store/atoms'
-import { ImportVault, GetCollections,GetVault } from "../../../wailsjs/go/main/App";
+import { ImportVault, GetCollections, GetVault } from "../../../bindings/changeme/app";
 import CreateCollectionModal from '../CreateCollectionModal'
 import { onMount } from 'solid-js'
 

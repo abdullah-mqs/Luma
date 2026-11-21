@@ -5,7 +5,7 @@ import { createStore } from 'solid-js/store'
 export interface Collection {
   id: string
   name: string
-  parentId?: string
+  parentId?: string | null
   path: string
   hasNotes: boolean
   createdAt: string
@@ -121,7 +121,7 @@ export const builtInThemes: Record<string, Theme> = {
     colors: {
       bgPrimary: '#0f0a0a',
       bgSecondary: '#150f0f',
-      bgTertiary: '#221a1a',
+      bgTertiary: '#1a221a',
       bgElevated: '#2e2424',
       borderSubtle: '#2a1e1e',
       borderStrong: '#3a2a2a',

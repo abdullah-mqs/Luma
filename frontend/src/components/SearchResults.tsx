@@ -1,7 +1,7 @@
 import { For, Show, createSignal, createEffect } from 'solid-js'
 import { FiFileText, FiX, FiSearch } from './Icons'
 import { searchQuery, setSearchQuery, vault, setSelectedNoteId, setSelectedCollectionId } from '../store/atoms'
-import { SearchNotes } from '../../wailsjs/go/main/App'
+import { SearchNotes } from "../../bindings/changeme/app";
 import type { Note } from '../store/atoms'
 
 export default function SearchResults() {

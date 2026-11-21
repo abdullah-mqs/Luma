@@ -10,26 +10,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
-// App struct
-type App struct {
-	ctx context.Context
-}
+// ---------- Types ----------
 
-// NewApp creates a new App application struct
-func NewApp() *App {
-	return &App{}
-}
-
-// startup is called when the app starts. The context is saved
-// so we can call the runtime methods
-func (a *App) startup(ctx context.Context) {
-	a.ctx = ctx
-}
-
-// Types
 type Collection struct {
 	ID        string  `json:"id"`
 	Name      string  `json:"name"`
@@ -41,12 +26,12 @@ type Collection struct {
 }
 
 type Note struct {
-	ID        string          `json:"id"`
-	Title     string          `json:"title"`
-	Content   json.RawMessage `json:"content"`
-	Path      string          `json:"path"`
-	CreatedAt string          `json:"createdAt"`
-	UpdatedAt string          `json:"updatedAt"`
+	ID        string `json:"id"`
+	Title     string `json:"title"`
+	Content   any    `json:"content"`
+	Path      string `json:"path"`
+	CreatedAt string `json:"createdAt"`
+	UpdatedAt string `json:"updatedAt"`
 }
 
 type Vault struct {
@@ -57,39 +42,115 @@ type Vault struct {
 	UpdatedAt string `json:"updatedAt"`
 }
 
-// Greet returns a greeting for the given name
-func (a *App) Greet(name string) string {
-	return fmt.Sprintf("Hello %s, It's show time!", name)
+// ---------- App ----------
+
+type App struct {
+	app *application.App
 }
 
-// ImportVault opens folder picker and imports folder as vault
-func (a *App) ImportVault() (*Vault, error) {
-	path, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "Select Vault Folder",
-	})
+func NewApp() *App {
+	return &App{}
+}
 
+func (a *App) ServiceStartup(ctx context.Context, options application.ServiceOptions) error {
+	a.app = application.Get()
+	return nil
+}
+
+// ---------- Helpers ----------
+
+func (a *App) configFilePath() (string, error) {
+	cfgDir, err := os.UserConfigDir()
 	if err != nil {
-		return nil, err
+		return "", err
 	}
+	dir := filepath.Join(cfgDir, "luma")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "vault.json"), nil
+}
 
+func (a *App) SaveVaultPath(path string) error {
+	cfgPath, err := a.configFilePath()
+	if err != nil {
+		return err
+	}
+	data := map[string]string{"path": path}
+	b, _ := json.Marshal(data)
+	return os.WriteFile(cfgPath, b, 0644)
+}
+
+func (a *App) loadSavedVaultPath() string {
+	cfgPath, err := a.configFilePath()
+	if err != nil {
+		return ""
+	}
+	b, err := os.ReadFile(cfgPath)
+	if err != nil {
+		return ""
+	}
+	var data map[string]string
+	if err := json.Unmarshal(b, &data); err != nil {
+		return ""
+	}
+	return data["path"]
+}
+
+func safeName(name string) string {
+	name = strings.TrimSpace(name)
+	r := strings.NewReplacer("/", "-", "\\", "-", ":", "-", "*", "-", "?", "-", "\"", "-", "<", "-", ">", "-", "|", "-")
+	return r.Replace(name)
+}
+
+func readCollectionMeta(folderPath string, parentID *string) Collection {
+	metaPath := filepath.Join(folderPath, "collection.json")
+	if b, err := os.ReadFile(metaPath); err == nil {
+		var c Collection
+		if err := json.Unmarshal(b, &c); err == nil {
+			if c.Path == "" {
+				c.Path = folderPath
+			}
+			return c
+		}
+	}
+	info, _ := os.Stat(folderPath)
+	created := ""
+	updated := ""
+	if info != nil {
+		created = info.ModTime().Format(time.RFC3339)
+		updated = created
+	}
+	return Collection{
+		ID:        filepath.Base(folderPath),
+		Name:      filepath.Base(folderPath),
+		ParentID:  parentID,
+		Path:      folderPath,
+		HasNotes:  false,
+		CreatedAt: created,
+		UpdatedAt: updated,
+	}
+}
+
+func writeCollectionMeta(c Collection) error {
+	b, _ := json.MarshalIndent(c, "", "  ")
+	return os.WriteFile(filepath.Join(c.Path, "collection.json"), b, 0644)
+}
+
+// ---------- Vault ----------
+
+func (a *App) GetVault() (*Vault, error) {
+	path := a.loadSavedVaultPath()
 	if path == "" {
 		return nil, nil
 	}
-
 	info, err := os.Stat(path)
 	if err != nil {
-		return nil, fmt.Errorf("folder does not exist: %w", err)
+		return nil, nil
 	}
-
 	if !info.IsDir() {
-		return nil, fmt.Errorf("not a folder")
+		return nil, nil
 	}
-
-	// Save vault path
-	if err := a.SaveVaultPath(path); err != nil {
-		fmt.Printf("Warning: Could not save vault path: %v\n", err)
-	}
-
 	vault := &Vault{
 		ID:        filepath.Base(path),
 		Name:      filepath.Base(path),
@@ -97,417 +158,404 @@ func (a *App) ImportVault() (*Vault, error) {
 		CreatedAt: info.ModTime().Format(time.RFC3339),
 		UpdatedAt: info.ModTime().Format(time.RFC3339),
 	}
-
 	return vault, nil
 }
 
-// GetCollections scans vault and returns all collections (folders)
+func (a *App) ImportVault() (*Vault, error) {
+	path, err := a.app.Dialog.OpenFile().
+		SetTitle("Select Vault Folder").
+		CanChooseDirectories(true).
+		CanChooseFiles(false).
+		PromptForSingleSelection()
+	if err != nil {
+		return nil, err
+	}
+	if path == "" {
+		return nil, nil
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, fmt.Errorf("folder does not exist: %w", err)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("not a folder")
+	}
+	if err := a.SaveVaultPath(path); err != nil {
+		fmt.Printf("Warning: Could not save vault path: %v\n", err)
+	}
+	vault := &Vault{
+		ID:        filepath.Base(path),
+		Name:      filepath.Base(path),
+		Path:      path,
+		CreatedAt: info.ModTime().Format(time.RFC3339),
+		UpdatedAt: info.ModTime().Format(time.RFC3339),
+	}
+	return vault, nil
+}
+
+// ---------- Collections ----------
+
 func (a *App) GetCollections(vaultPath string) ([]Collection, error) {
-	var collections []Collection
-
-	err := filepath.Walk(vaultPath, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
+	if vaultPath == "" {
+		return []Collection{}, nil
+	}
+	var result []Collection
+	entries, err := os.ReadDir(vaultPath)
+	if err != nil {
+		return []Collection{}, nil
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
 		}
-
-		// Skip root vault folder
-		if path == vaultPath {
-			return nil
+		if strings.HasPrefix(e.Name(), ".") {
+			continue
 		}
-
-		// Skip hidden files/folders
-		if filepath.Base(path)[0] == '.' {
-			if info.IsDir() {
-				return filepath.SkipDir
+		folder := filepath.Join(vaultPath, e.Name())
+		c := readCollectionMeta(folder, nil)
+		files, _ := os.ReadDir(folder)
+		for _, f := range files {
+			if !f.IsDir() && strings.HasSuffix(f.Name(), ".json") && f.Name() != "collection.json" {
+				c.HasNotes = true
+				break
 			}
-			return nil
 		}
-
-		if info.IsDir() {
-			var parentID *string
-			parentPath := filepath.Dir(path)
-			if parentPath != vaultPath {
-				parentID = &parentPath
+		result = append(result, c)
+		subEntries, _ := os.ReadDir(folder)
+		for _, se := range subEntries {
+			if !se.IsDir() {
+				continue
 			}
-
-			// Check if folder has notes (json files directly inside)
-			hasNotes := false
-			files, _ := os.ReadDir(path)
-			for _, file := range files {
-				if !file.IsDir() && filepath.Ext(file.Name()) == ".json" {
-					hasNotes = true
+			if strings.HasPrefix(se.Name(), ".") {
+				continue
+			}
+			subFolder := filepath.Join(folder, se.Name())
+			parentID := c.ID
+			sc := readCollectionMeta(subFolder, &parentID)
+			subFiles, _ := os.ReadDir(subFolder)
+			for _, f := range subFiles {
+				if !f.IsDir() && strings.HasSuffix(f.Name(), ".json") && f.Name() != "collection.json" {
+					sc.HasNotes = true
 					break
 				}
 			}
-
-			collections = append(collections, Collection{
-				ID:        path,
-				Name:      filepath.Base(path),
-				ParentID:  parentID,
-				Path:      path,
-				HasNotes:  hasNotes,
-				CreatedAt: info.ModTime().Format(time.RFC3339),
-				UpdatedAt: info.ModTime().Format(time.RFC3339),
-			})
-		}
-
-		return nil
-	})
-
-	if err != nil {
-		return nil, err
-	}
-
-	// Sort by name
-	sort.Slice(collections, func(i, j int) bool {
-		return collections[i].Name < collections[j].Name
-	})
-
-	return collections, nil
-}
-
-// GetNotes returns all notes in a collection
-func (a *App) GetNotes(collectionPath string) ([]Note, error) {
-	var notes []Note
-
-	files, err := os.ReadDir(collectionPath)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, file := range files {
-		if !file.IsDir() && filepath.Ext(file.Name()) == ".json" {
-			filePath := filepath.Join(collectionPath, file.Name())
-
-			data, err := os.ReadFile(filePath)
-			if err != nil {
-				continue
-			}
-
-			var noteData struct {
-				Title   string          `json:"title"`
-				Content json.RawMessage `json:"content"`
-			}
-
-			if err := json.Unmarshal(data, &noteData); err != nil {
-				continue
-			}
-
-			info, _ := file.Info()
-			notes = append(notes, Note{
-				ID:        filePath,
-				Title:     noteData.Title,
-				Content:   noteData.Content,
-				Path:      filePath,
-				CreatedAt: info.ModTime().Format(time.RFC3339),
-				UpdatedAt: info.ModTime().Format(time.RFC3339),
-			})
+			result = append(result, sc)
 		}
 	}
-
-	// Sort by updated time (most recent first)
-	sort.Slice(notes, func(i, j int) bool {
-		return notes[i].UpdatedAt > notes[j].UpdatedAt
+	sort.Slice(result, func(i, j int) bool {
+		return strings.ToLower(result[i].Name) < strings.ToLower(result[j].Name)
 	})
-
-	return notes, nil
+	if result == nil {
+		result = []Collection{}
+	}
+	return result, nil
 }
 
-// ReadNote reads a single note file
-func (a *App) ReadNote(notePath string) (*Note, error) {
-	data, err := os.ReadFile(notePath)
-	if err != nil {
-		return nil, err
+func (a *App) CreateCollection(parentPath string, name string) (Collection, error) {
+	name = safeName(name)
+	if name == "" {
+		return Collection{}, fmt.Errorf("name is empty")
 	}
-
-	var noteData struct {
-		Title   string          `json:"title"`
-		Content json.RawMessage `json:"content"`
+	if err := os.MkdirAll(parentPath, 0755); err != nil {
+		return Collection{}, err
 	}
-
-	if err := json.Unmarshal(data, &noteData); err != nil {
-		return nil, err
+	folder := filepath.Join(parentPath, name)
+	if err := os.MkdirAll(folder, 0755); err != nil {
+		return Collection{}, err
 	}
-
-	info, _ := os.Stat(notePath)
-
-	return &Note{
-		ID:        notePath,
-		Title:     noteData.Title,
-		Content:   noteData.Content,
-		Path:      notePath,
-		CreatedAt: info.ModTime().Format(time.RFC3339),
-		UpdatedAt: info.ModTime().Format(time.RFC3339),
-	}, nil
-}
-
-// CreateCollection creates a new folder
-func (a *App) CreateCollection(parentPath string, name string) (*Collection, error) {
-	newPath := filepath.Join(parentPath, name)
-
-	if err := os.MkdirAll(newPath, 0755); err != nil {
-		return nil, err
+	now := time.Now().Format(time.RFC3339)
+	// parentId nikaalo: agar parentPath ke andar collection.json hai to wo parent hai, warna root hai
+	var parentId *string
+	if b, err := os.ReadFile(filepath.Join(parentPath, "collection.json")); err == nil {
+		var parent Collection
+		if err := json.Unmarshal(b, &parent); err == nil {
+			parentId = &parent.ID
+		}
 	}
-
-	info, _ := os.Stat(newPath)
-
-	var parentID *string
-	if parentPath != "" {
-		parentID = &parentPath
-	}
-
-	return &Collection{
-		ID:        newPath,
+	c := Collection{
+		ID:        name,
 		Name:      name,
-		ParentID:  parentID,
-		Path:      newPath,
+		ParentID:  parentId,
+		Path:      folder,
 		HasNotes:  false,
-		CreatedAt: info.ModTime().Format(time.RFC3339),
-		UpdatedAt: info.ModTime().Format(time.RFC3339),
-	}, nil
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if parentId != nil {
+		c.ID = *parentId + "/" + name
+	}
+	_ = writeCollectionMeta(c)
+	return c, nil
 }
 
-// CreateNote creates a new note file
-func (a *App) CreateNote(collectionPath string, title string) (*Note, error) {
-	noteData := struct {
-		Title   string          `json:"title"`
-		Content json.RawMessage `json:"content"`
-	}{
-		Title:   title,
-		Content: json.RawMessage(`{"type":"doc","content":[{"type":"paragraph","content":[]}]}`),
+func (a *App) DeleteCollection(collectionPath string) error {
+	if _, err := os.Stat(collectionPath); err != nil {
+		return fmt.Errorf("collection not found")
 	}
-
-	data, _ := json.MarshalIndent(noteData, "", "  ")
-	notePath := filepath.Join(collectionPath, title+".json")
-
-	if err := os.WriteFile(notePath, data, 0644); err != nil {
-		return nil, err
-	}
-
-	info, _ := os.Stat(notePath)
-
-	return &Note{
-		ID:        notePath,
-		Title:     title,
-		Content:   noteData.Content,
-		Path:      notePath,
-		CreatedAt: info.ModTime().Format(time.RFC3339),
-		UpdatedAt: info.ModTime().Format(time.RFC3339),
-	}, nil
+	return os.RemoveAll(collectionPath)
 }
 
-// SaveNote saves note content to file
-func (a *App) SaveNote(notePath string, title string, content json.RawMessage) error {
-	noteData := struct {
-		Title   string          `json:"title"`
-		Content json.RawMessage `json:"content"`
-	}{
-		Title:   title,
-		Content: content,
+func (a *App) RenameCollection(collectionPath string, newName string) (Collection, error) {
+	newName = safeName(newName)
+	if _, err := os.Stat(collectionPath); err != nil {
+		return Collection{}, fmt.Errorf("collection not found")
 	}
-
-	data, err := json.MarshalIndent(noteData, "", "  ")
-	if err != nil {
-		return err
+	// pehle purana meta padh lo
+	old := readCollectionMeta(collectionPath, nil)
+	newPath := filepath.Join(filepath.Dir(collectionPath), newName)
+	if err := os.Rename(collectionPath, newPath); err != nil {
+		return Collection{}, err
 	}
-
-	return os.WriteFile(notePath, data, 0644)
+	old.Name = newName
+	old.Path = newPath
+	old.UpdatedAt = time.Now().Format(time.RFC3339)
+	if !strings.Contains(old.ID, "/") {
+		old.ID = newName
+	}
+	_ = writeCollectionMeta(old)
+	return old, nil
 }
 
-// DeleteCollection removes a folder
-func (a *App) DeleteCollection(path string) error {
-	return os.RemoveAll(path)
-}
+// ---------- Notes ----------
 
-// DeleteNote removes a note file
-func (a *App) DeleteNote(path string) error {
-	return os.Remove(path)
-}
-
-// RenameCollection renames a folder
-func (a *App) RenameCollection(path string, newName string) error {
-	newPath := filepath.Join(filepath.Dir(path), newName)
-	return os.Rename(path, newPath)
-}
-
-// RenameNote renames a note file
-func (a *App) RenameNote(notePath string, newTitle string) (*Note, error) {
-
-	data, err := os.ReadFile(notePath)
-	if err != nil {
-		return nil, err
+func (a *App) resolveCollectionFolder(vaultPath string, collectionPath string) string {
+	if info, err := os.Stat(collectionPath); err == nil && info.IsDir() {
+		return collectionPath
 	}
-
-	var noteData struct {
-		Title   string          `json:"title"`
-		Content json.RawMessage `json:"content"`
-	}
-
-	if err := json.Unmarshal(data, &noteData); err != nil {
-		return nil, err
-	}
-
-	noteData.Title = newTitle
-
-	updatedData, err := json.MarshalIndent(noteData, "", "  ")
-	if err != nil {
-		return nil, err
-	}
-
-	newPath := filepath.Join(filepath.Dir(notePath), newTitle+".json")
-	if err := os.Rename(notePath, newPath); err != nil {
-		return nil, err
-	}
-
-	if err := os.WriteFile(newPath, updatedData, 0644); err != nil {
-		return nil, err
-	}
-
-	return a.ReadNote(newPath)
-}
-
-// SearchNotes searches notes by title and content
-func (a *App) SearchNotes(vaultPath string, query string) ([]Note, error) {
-	var results []Note
-
-	if query == "" {
-		return results, nil
-	}
-
-	query = strings.ToLower(query)
-
-	err := filepath.Walk(vaultPath, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
+	cols, _ := a.GetCollections(vaultPath)
+	for _, c := range cols {
+		if c.ID == collectionPath {
+			return c.Path
 		}
+	}
+	return filepath.Join(vaultPath, collectionPath)
+}
 
-		// Skip hidden files/folders
-		if filepath.Base(path)[0] == '.' {
-			if info.IsDir() {
-				return filepath.SkipDir
-			}
+func (a *App) resolveNotePath(notePath string) string {
+	// agar ye pehle se poora path hai to wahi
+	if _, err := os.Stat(notePath); err == nil {
+		return notePath
+	}
+	vaultPath := a.loadSavedVaultPath()
+	if vaultPath == "" {
+		return notePath
+	}
+	// warna vault me dhoondo: file ka naam ID.json hai ya ID hai
+	var found string
+	_ = filepath.Walk(vaultPath, func(p string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
 			return nil
 		}
-
-		// Only search JSON files
-		if !info.IsDir() && filepath.Ext(path) == ".json" {
-			data, err := os.ReadFile(path)
-			if err != nil {
-				return nil
-			}
-
-			var noteData struct {
-				Title   string          `json:"title"`
-				Content json.RawMessage `json:"content"`
-			}
-
-			if err := json.Unmarshal(data, &noteData); err != nil {
-				return nil
-			}
-
-			// Search in title
-			titleMatch := strings.Contains(strings.ToLower(noteData.Title), query)
-
-			// Search in content
-			contentStr := string(noteData.Content)
-			contentMatch := strings.Contains(strings.ToLower(contentStr), query)
-
-			if titleMatch || contentMatch {
-				results = append(results, Note{
-					ID:        path,
-					Title:     noteData.Title,
-					Content:   noteData.Content,
-					Path:      path,
-					CreatedAt: info.ModTime().Format(time.RFC3339),
-					UpdatedAt: info.ModTime().Format(time.RFC3339),
-				})
+		base := filepath.Base(p)
+		if base == notePath || base == notePath+".json" {
+			found = p
+			return filepath.SkipAll
+		}
+		// andar ID bhi check karo
+		if strings.HasSuffix(p, ".json") {
+			b, err := os.ReadFile(p)
+			if err == nil {
+				var n Note
+				if json.Unmarshal(b, &n) == nil && n.ID == notePath {
+					found = p
+					return filepath.SkipAll
+				}
 			}
 		}
-
 		return nil
 	})
+	if found != "" {
+		return found
+	}
+	return notePath
+}
+func (a *App) GetNotes(collectionPath string) ([]Note, error) {
+	folder := collectionPath
+	if info, err := os.Stat(folder); err != nil || !info.IsDir() {
+		vaultPath := a.loadSavedVaultPath()
+		if vaultPath != "" {
+			folder = a.resolveCollectionFolder(vaultPath, collectionPath)
+		}
+	}
+	entries, err := os.ReadDir(folder)
+	if err != nil {
+		return []Note{}, nil
+	}
+	var result []Note
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		if !strings.HasSuffix(e.Name(), ".json") || e.Name() == "collection.json" {
+			continue
+		}
+		full := filepath.Join(folder, e.Name())
+		b, err := os.ReadFile(full)
+		if err != nil {
+			continue
+		}
+		var n Note
+		if err := json.Unmarshal(b, &n); err != nil {
+			continue
+		}
+		if n.Path == "" {
+			n.Path = full
+		}
+		result = append(result, n)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return strings.ToLower(result[i].Title) < strings.ToLower(result[j].Title)
+	})
+	if result == nil {
+		result = []Note{}
+	}
+	return result, nil
+}
 
+func (a *App) GetNote(notePath string) (*Note, error) {
+	notePath = a.resolveNotePath(notePath)
+	b, err := os.ReadFile(notePath)
 	if err != nil {
 		return nil, err
 	}
+	var n Note
+	if err := json.Unmarshal(b, &n); err != nil {
+		return nil, err
+	}
+	if n.Path == "" {
+		n.Path = notePath
+	}
+	return &n, nil
+}
 
-	// Sort by updated time
-	sort.Slice(results, func(i, j int) bool {
-		return results[i].UpdatedAt > results[j].UpdatedAt
+// Editor me ReadNote naam se bhi call ho raha hai, isliye alias
+func (a *App) ReadNote(notePath string) (*Note, error) {
+	return a.GetNote(notePath)
+}
+
+func (a *App) CreateNote(collectionPath string, title string) (Note, error) {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		title = "Untitled"
+	}
+	folder := collectionPath
+	if info, err := os.Stat(folder); err != nil || !info.IsDir() {
+		vaultPath := a.loadSavedVaultPath()
+		if vaultPath != "" {
+			folder = a.resolveCollectionFolder(vaultPath, collectionPath)
+		}
+	}
+	if err := os.MkdirAll(folder, 0755); err != nil {
+		return Note{}, err
+	}
+	id := fmt.Sprintf("%d", time.Now().UnixNano())
+	now := time.Now().Format(time.RFC3339)
+	filePath := filepath.Join(folder, id+".json")
+	n := Note{
+		ID:        id,
+		Title:     title,
+		Content:   map[string]any{"type": "doc", "content": []any{}},
+		Path:      filePath,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	b, _ := json.MarshalIndent(n, "", "  ")
+	if err := os.WriteFile(filePath, b, 0644); err != nil {
+		return Note{}, err
+	}
+	return n, nil
+}
+
+func (a *App) UpdateNote(notePath string, title string, content any) (Note, error) {
+	notePath = a.resolveNotePath(notePath)
+	n, err := a.GetNote(notePath)
+	if err != nil {
+		return Note{}, err
+	}
+	if title != "" {
+		n.Title = title
+	}
+	if content != nil {
+		n.Content = content
+	}
+	n.UpdatedAt = time.Now().Format(time.RFC3339)
+	b, _ := json.MarshalIndent(n, "", "  ")
+	if err := os.WriteFile(notePath, b, 0644); err != nil {
+		return Note{}, err
+	}
+	return *n, nil
+}
+
+func (a *App) SaveNote(notePath string, title string, content any) (Note, error) {
+	return a.UpdateNote(notePath, title, content)
+}
+
+func (a *App) DeleteNote(notePath string) error {
+	notePath = a.resolveNotePath(notePath)
+	if _, err := os.Stat(notePath); err != nil {
+		vaultPath := a.loadSavedVaultPath()
+		if vaultPath != "" {
+			var found string
+			_ = filepath.Walk(vaultPath, func(p string, info os.FileInfo, err error) error {
+				if err == nil && !info.IsDir() && filepath.Base(p) == filepath.Base(notePath) {
+					found = p
+				}
+				return nil
+			})
+			if found != "" {
+				notePath = found
+			}
+		}
+	}
+	return os.Remove(notePath)
+}
+
+func (a *App) RenameNote(notePath string, newTitle string) (Note, error) {
+	notePath = a.resolveNotePath(notePath)
+	n, err := a.GetNote(notePath)
+	if err != nil {
+		return Note{}, err
+	}
+	n.Title = strings.TrimSpace(newTitle)
+	n.UpdatedAt = time.Now().Format(time.RFC3339)
+	b, _ := json.MarshalIndent(n, "", "  ")
+	if err := os.WriteFile(notePath, b, 0644); err != nil {
+		return Note{}, err
+	}
+	return *n, nil
+}
+
+func (a *App) SearchNotes(vaultPath string, query string) ([]Note, error) {
+	if query == "" {
+		return []Note{}, nil
+	}
+	q := strings.ToLower(query)
+	var result []Note
+	_ = filepath.Walk(vaultPath, func(p string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		if !strings.HasSuffix(p, ".json") || filepath.Base(p) == "collection.json" {
+			return nil
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return nil
+		}
+		var n Note
+		if err := json.Unmarshal(b, &n); err != nil {
+			return nil
+		}
+		if strings.Contains(strings.ToLower(n.Title), q) {
+			if n.Path == "" {
+				n.Path = p
+			}
+			result = append(result, n)
+		}
+		return nil
 	})
-
-	return results, nil
-}
-
-// Config file path
-func (a *App) getConfigPath() string {
-	homeDir, _ := os.UserHomeDir()
-	return filepath.Join(homeDir, ".luma", "config.json")
-}
-
-// SaveVaultPath saves vault path to config
-func (a *App) SaveVaultPath(vaultPath string) error {
-	configDir := filepath.Dir(a.getConfigPath())
-	if err := os.MkdirAll(configDir, 0755); err != nil {
-		return err
+	if result == nil {
+		result = []Note{}
 	}
-
-	config := struct {
-		VaultPath string `json:"vaultPath"`
-	}{
-		VaultPath: vaultPath,
-	}
-
-	data, err := json.MarshalIndent(config, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	return os.WriteFile(a.getConfigPath(), data, 0644)
-}
-
-// LoadVaultPath loads vault path from config
-func (a *App) LoadVaultPath() (string, error) {
-	data, err := os.ReadFile(a.getConfigPath())
-	if err != nil {
-		return "", nil // No config file yet
-	}
-
-	var config struct {
-		VaultPath string `json:"vaultPath"`
-	}
-
-	if err := json.Unmarshal(data, &config); err != nil {
-		return "", err
-	}
-
-	return config.VaultPath, nil
-}
-
-// GetVault loads vault info from saved path
-func (a *App) GetVault() (*Vault, error) {
-	vaultPath, err := a.LoadVaultPath()
-	if err != nil || vaultPath == "" {
-		return nil, nil
-	}
-
-	// Check if folder exists
-	info, err := os.Stat(vaultPath)
-	if err != nil {
-		return nil, nil // Folder not found, ignore
-	}
-
-	if !info.IsDir() {
-		return nil, nil
-	}
-
-	vault := &Vault{
-		ID:        filepath.Base(vaultPath),
-		Name:      filepath.Base(vaultPath),
-		Path:      vaultPath,
-		CreatedAt: info.ModTime().Format(time.RFC3339),
-		UpdatedAt: info.ModTime().Format(time.RFC3339),
-	}
-
-	return vault, nil
+	return result, nil
 }

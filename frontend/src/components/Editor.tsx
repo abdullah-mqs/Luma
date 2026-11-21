@@ -16,7 +16,7 @@ import { TaskItem } from '@tiptap/extension-task-item'
 import { CodeBlockLowlight } from '@tiptap/extension-code-block-lowlight'
 import { createLowlight, all } from 'lowlight'
 import { selectedNoteId } from '../store/atoms'
-import { ReadNote, SaveNote } from '../../wailsjs/go/main/App'
+import { ReadNote, SaveNote } from "../../bindings/changeme/app";
 import { setSelectedNoteId } from '../store/atoms'
 
 import {
@@ -240,11 +240,10 @@ export default function Editor() {
       <button
         onClick={() => handleToolbar(props.action)}
         disabled={!isEditing()}
-        class={`p-2 rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${
-          isActive(props.action) && isEditing()
-            ? 'bg-accent/20 text-accent'
-            : 'text-text-muted hover:text-text-primary hover:bg-bg-tertiary'
-        }`}
+        class={`p-2 rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${isActive(props.action) && isEditing()
+          ? 'bg-accent/20 text-accent'
+          : 'text-text-muted hover:text-text-primary hover:bg-bg-tertiary'
+          }`}
         title={props.label}
       >
         {props.icon}

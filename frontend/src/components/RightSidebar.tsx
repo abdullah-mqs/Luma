@@ -1,7 +1,7 @@
 import { For, Show, createSignal, createEffect } from 'solid-js'
 import { FiFileText, FiPlus, FiMoreVertical, FiEdit2, FiTrash2, FiX, FiChevronRight } from './Icons'
 import { selectedCollectionId, collections, selectedNoteId, setSelectedNoteId, setCollections, vault } from '../store/atoms'
-import { GetNotes, GetCollections } from '../../wailsjs/go/main/App'
+import { GetNotes, GetCollections } from "../../bindings/changeme/app";
 import type { Note } from '../store/atoms'
 import ContextMenu from './ContextMenu'
 import CreateNoteModal from './CreateNoteModal'
@@ -18,7 +18,7 @@ export default function RightSidebar() {
   const [showRenameModal, setShowRenameModal] = createSignal(false)
   const [showDeleteModal, setShowDeleteModal] = createSignal(false)
   const [selectedNote, setSelectedNote] = createSignal<Note | null>(null)
-  const [contextMenu, setContextMenu] = createSignal<{x: number, y: number, note: Note} | null>(null)
+  const [contextMenu, setContextMenu] = createSignal<{ x: number, y: number, note: Note } | null>(null)
   const [loading, setLoading] = createSignal(false)
 
   const selectedCollection = () =>

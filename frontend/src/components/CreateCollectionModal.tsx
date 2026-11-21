@@ -1,7 +1,7 @@
 import { createSignal, Show } from 'solid-js'
 import Modal from './Modal'
 import { setCollections, vault } from '../store/atoms'
-import { CreateCollection, GetCollections } from '../../wailsjs/go/main/App'
+import { CreateCollection, GetCollections } from "../../bindings/changeme/app";
 
 interface Props {
   isOpen: boolean

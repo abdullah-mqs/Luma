@@ -1,6 +1,6 @@
 import { createSignal, Show } from 'solid-js'
 import Modal from './Modal'
-import { CreateNote } from '../../wailsjs/go/main/App'
+import { CreateNote } from "../../bindings/changeme/app";
 import type { Note } from '../store/atoms'
 
 interface Props {
