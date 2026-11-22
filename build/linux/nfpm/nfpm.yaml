@@ -3,7 +3,7 @@
 #
 # The lines below are called `modelines`. See `:help modeline`
 
-name: "luma-v3"
+name: "luma"
 arch: ${GOARCH}
 platform: "linux"
 version: "0.1.0"
@@ -17,12 +17,12 @@ license: "MIT"
 release: "1"
 
 contents:
-  - src: "./bin/luma-v3"
-    dst: "/usr/local/bin/luma-v3"
+  - src: "./bin/luma"
+    dst: "/usr/local/bin/luma"
   - src: "./build/appicon.png"
-    dst: "/usr/share/icons/hicolor/128x128/apps/luma-v3.png"
-  - src: "./build/linux/luma-v3.desktop"
-    dst: "/usr/share/applications/luma-v3.desktop"
+    dst: "/usr/share/icons/hicolor/128x128/apps/luma.png"
+  - src: "./build/linux/luma.desktop"
+    dst: "/usr/share/applications/luma.desktop"
 
 # Default dependencies for the GTK4 + WebKitGTK 6.0 stack (Ubuntu 24.04+ / Debian 13+)
 depends:

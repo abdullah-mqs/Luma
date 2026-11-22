@@ -12,7 +12,7 @@ var assets embed.FS
 
 func main() {
 	app := application.New(application.Options{
-		Name:        "Luma",
+		Name:        "luma",
 		Description: "Fast, beautiful note-taking app",
 		Services: []application.Service{
 			application.NewService(NewApp()),

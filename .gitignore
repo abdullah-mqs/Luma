@@ -1,3 +1,23 @@
-build/bin
-node_modules
-frontend/dist
+cat > .gitignore <<'EOF'
+# Build output - ye har baar banta hai, isko push nahi karna
+bin/
+frontend/dist/
+frontend/bindings/
+frontend/node_modules/
+
+# Wails 3 generated files
+build/linux/*.desktop
+build/linux/appimage/
+build/linux/*.AppImage
+
+# Go
+*.exe
+*.test
+*.out
+
+# OS / Editor
+.DS_Store
+.vscode/
+.idea/
+EOF
+cat .gitignore
