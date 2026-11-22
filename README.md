@@ -2,6 +2,8 @@
 
 A beautiful, fast, and minimal note-taking app built with Wails (Go) and SolidJS.
 
+![Luma Screenshot](screenshot.png)
+
 ## ✨ Features
 
 - 📂 Vault System - Import any folder as your notes vault
